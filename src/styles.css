@@ -142,3 +142,82 @@
     color: var(--color-foreground);
   }
 }
+
+/* ── Selectividad app design system ─────────────────────────────── */
+:root {
+  --background: oklch(0.19 0.02 250);
+  --foreground: oklch(0.95 0.01 250);
+  --card: oklch(0.235 0.022 252);
+  --card-foreground: oklch(0.95 0.01 250);
+  --popover: oklch(0.235 0.022 252);
+  --popover-foreground: oklch(0.95 0.01 250);
+  --primary: oklch(0.78 0.16 78);
+  --primary-foreground: oklch(0.2 0.03 78);
+  --secondary: oklch(0.3 0.03 250);
+  --secondary-foreground: oklch(0.95 0.01 250);
+  --muted: oklch(0.28 0.025 250);
+  --muted-foreground: oklch(0.72 0.02 250);
+  --accent: oklch(0.72 0.13 210);
+  --accent-foreground: oklch(0.18 0.03 210);
+  --destructive: oklch(0.62 0.21 25);
+  --destructive-foreground: oklch(0.98 0.01 25);
+  --success: oklch(0.7 0.15 150);
+  --success-foreground: oklch(0.18 0.03 150);
+  --warning: oklch(0.8 0.15 85);
+  --border: oklch(0.36 0.03 250);
+  --input: oklch(0.3 0.03 250);
+  --ring: oklch(0.78 0.16 78);
+  --radius: 0.5rem;
+  --grid-line: oklch(0.32 0.025 250);
+  --font-mono-stack: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@theme inline {
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --font-mono: var(--font-mono-stack);
+}
+
+@layer base {
+  body {
+    font-family: var(--font-mono-stack);
+    background-image: radial-gradient(
+      circle at 20% 0%,
+      oklch(0.26 0.04 250) 0%,
+      var(--background) 55%
+    );
+    background-attachment: fixed;
+  }
+}
+
+@utility field {
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--input);
+  background-color: oklch(0.21 0.02 250);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--foreground);
+  outline: none;
+}
+@utility field {
+  &:focus {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 2px oklch(0.78 0.16 78 / 25%);
+  }
+}
+@utility label-xs {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+@utility panel {
+  border-radius: calc(var(--radius) + 4px);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  box-shadow: 0 10px 30px oklch(0.1 0.02 250 / 45%);
+}
