@@ -615,13 +615,13 @@ function Index() {
               <table className="w-full min-w-[820px] text-left text-[0.72rem]">
                 <thead className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">
                   <tr className="border-b border-border">
-                    <th className="py-2">Equipo</th>
-                    <th className="py-2">Tipo</th>
-                    <th className="py-2">In</th>
-                    <th className="py-2">Curva</th>
-                    <th className="py-2">kA</th>
-                    <th className="py-2">Cable</th>
-                    <th className="py-2">Estado</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Equipo</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Tipo</th>
+                    <th className="whitespace-nowrap py-2 pr-4">In</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Curva</th>
+                    <th className="whitespace-nowrap py-2 pr-4">kA</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Cable</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Estado</th>
                     <th className="py-2 text-right">Acciones</th>
                   </tr>
                 </thead>
@@ -632,7 +632,7 @@ function Index() {
                       const v = verdict(d);
                       return (
                         <tr key={d.id} className="border-b border-border/50">
-                          <td className="py-2">
+                          <td className="py-2 pr-4">
                             <span className="flex items-center gap-2">
                               <span
                                 className="inline-block h-2.5 w-2.5 rounded-full"
@@ -644,14 +644,14 @@ function Index() {
                           <td className="py-2 text-muted-foreground">
                             {TYPES.find((t) => t.value === d.type)?.label}
                           </td>
-                          <td className="py-2">{d.In} A</td>
-                          <td className="py-2">{d.curve}</td>
-                          <td className="py-2">{d.kA}</td>
+                          <td className="py-2 pr-4">{d.In} A</td>
+                          <td className="py-2 pr-4">{d.curve}</td>
+                          <td className="py-2 pr-4">{d.kA}</td>
                           <td className="py-2 text-muted-foreground">
                             {d.section} mm² · {d.cableType === "unipolar" ? "uni" : "multi"} ·{" "}
                             {d.install === "aire" ? "aire" : "subt."} · Iz {d.cableIz} A
                           </td>
-                          <td className="py-2">
+                          <td className="py-2 pr-4">
                             <span
                               title={v.detail}
                               className={`rounded border px-2 py-0.5 text-[0.65rem] ${toneClass[v.tone]}`}
