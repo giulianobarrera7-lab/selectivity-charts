@@ -109,7 +109,8 @@ function tripTime(d: Device, I: number): number | null {
   }
 
   // Termomagnético / guardamotor: térmica + magnética
-  const band = MAG_BAND[d.curve] ?? (d.type === "guardamotor" ? MAG_BAND.MA : MAG_BAND.C);
+  const band =
+    MAG_BAND[d.curve] ?? (d.type === "guardamotor" ? MAG_BAND["MA"]! : MAG_BAND["C"]!);
   const kTh = d.type === "guardamotor" ? (CLASS_K[d.curve] ?? 60) : 80;
   if (x >= band[0]) return INST;
   if (x <= 1.13) return null;
