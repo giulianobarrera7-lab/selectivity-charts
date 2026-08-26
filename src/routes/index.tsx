@@ -133,8 +133,8 @@ function analyze(devices: Device[]) {
   const issues: Issue[] = [];
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
-      const down = list[i];
-      const up = list[j];
+      const down = list[i]!;
+      const up = list[j]!;
       if (up.In <= down.In) continue;
       let worst: Issue | null = null;
       for (let s = 0; s <= 300; s++) {
@@ -338,7 +338,7 @@ function Index() {
           name,
           id: crypto.randomUUID(),
           visible: true,
-          color: PALETTE[ds.length % PALETTE.length],
+          color: PALETTE[ds.length % PALETTE.length]!,
         },
       ]);
     }
@@ -356,7 +356,7 @@ function Index() {
     if (!d.visible) return { label: "Oculto", tone: "muted" as const, detail: "" };
     if (rel.some((i) => i.severity === "cruce"))
       return { label: "No apto", tone: "bad" as const, detail: rel.find((i) => i.severity === "cruce")!.detail };
-    if (rel.length) return { label: "Revisar", tone: "warn" as const, detail: rel[0].detail };
+    if (rel.length) return { label: "Revisar", tone: "warn" as const, detail: rel[0]!.detail };
     return { label: "Apto", tone: "ok" as const, detail: "Selectivo con las demás protecciones cargadas." };
   }
 
@@ -406,7 +406,7 @@ function Index() {
                 value={form.type}
                 onChange={(e) => {
                   const type = e.target.value as ProtType;
-                  const c = TYPES.find((t) => t.value === type)!.curves[0];
+                  const c = TYPES.find((t) => t.value === type)!.curves[0]!;
                   setForm({ ...form, type, curve: c });
                 }}
               >
