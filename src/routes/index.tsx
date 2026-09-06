@@ -481,75 +481,145 @@ function Index() {
               </div>
               <div>
                 <span className="label-xs">Icu (kA)</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.5"
+                <select
                   className="field"
                   value={form.kA}
                   onChange={(e) => setForm({ ...form, kA: Number(e.target.value) })}
-                />
+                >
+                  {ICU_VALORES.map((v) => (
+                    <option key={v.kA} value={v.kA}>
+                      {v.kA} kA
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
+            <p className="text-[0.65rem] leading-snug text-muted-foreground">
+              {ICU_VALORES.find((v) => v.kA === form.kA)?.uso ??
+                "Valor fuera de los normalizados IEC 60898-1 / 60947-2."}
+            </p>
 
             <div className="rounded-md border border-border/70 bg-secondary/40 p-3">
-              <p className="label-xs mb-2">Cable asociado (informativo)</p>
+              <p className="label-xs mb-2">Cable asociado — Iz según tablas AEA 90364</p>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <span className="label-xs">Tipo</span>
+                  <span className="label-xs">Montaje</span>
                   <select
                     className="field"
-                    value={form.cableType}
-                    onChange={(e) =>
-                      setForm({ ...form, cableType: e.target.value as Device["cableType"] })
-                    }
+                    value={form.montaje}
+                    onChange={(e) => {
+                      const montaje = e.target.value as Montaje;
+                      setForm({
+                        ...form,
+                        montaje,
+                        cableIz:
+                          izCorregida(form.section, montaje, form.polaridad, form.tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
                   >
-                    <option value="unipolar">Unipolar</option>
-                    <option value="multipolar">Multipolar / bipolar</option>
+                    <option value="caneria">En cañería (IRAM 2183, tabla 5.I)</option>
+                    <option value="aire">Al aire / bandeja (tabla 5.III)</option>
+                    <option value="subterraneo">Enterrado (tabla 5.III)</option>
                   </select>
                 </div>
                 <div>
-                  <span className="label-xs">Instalación</span>
+                  <span className="label-xs">Polaridad</span>
                   <select
                     className="field"
-                    value={form.install}
-                    onChange={(e) =>
-                      setForm({ ...form, install: e.target.value as Device["install"] })
-                    }
+                    value={form.polaridad}
+                    disabled={form.montaje === "caneria"}
+                    onChange={(e) => {
+                      const polaridad = e.target.value as Polaridad;
+                      setForm({
+                        ...form,
+                        polaridad,
+                        cableIz:
+                          izCorregida(form.section, form.montaje, polaridad, form.tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
                   >
-                    <option value="aire">Al aire / intemperie</option>
-                    <option value="subterraneo">Subterráneo</option>
+                    <option value="unipolar">Unipolar</option>
+                    <option value="bipolar">Bipolar</option>
+                    <option value="tripolar">Tripolar / tetrapolar</option>
                   </select>
                 </div>
                 <div>
                   <span className="label-xs">Sección (mm²)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.5"
+                  <select
                     className="field"
                     value={form.section}
-                    onChange={(e) => setForm({ ...form, section: Number(e.target.value) })}
-                  />
+                    onChange={(e) => {
+                      const section = Number(e.target.value);
+                      setForm({
+                        ...form,
+                        section,
+                        cableIz:
+                          izCorregida(section, form.montaje, form.polaridad, form.tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
+                  >
+                    {SECCIONES.map((s) => (
+                      <option key={s} value={s}>
+                        {s} mm²
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
+                  <span className="label-xs">Temp. ambiente (°C)</span>
+                  <select
+                    className="field"
+                    value={form.tempAmb}
+                    disabled={form.montaje !== "caneria"}
+                    onChange={(e) => {
+                      const tempAmb = Number(e.target.value);
+                      setForm({
+                        ...form,
+                        tempAmb,
+                        cableIz:
+                          izCorregida(form.section, form.montaje, form.polaridad, tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
+                  >
+                    {TABLA_5II.map((r) => (
+                      <option key={r.temp} value={r.temp}>
+                        {r.temp} °C (k = {r.k})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="col-span-2">
                   <span className="label-xs">Iz admisible (A)</span>
                   <input
                     type="number"
                     min={0}
-                    step="1"
+                    step="0.1"
                     className="field"
                     value={form.cableIz}
                     onChange={(e) => setForm({ ...form, cableIz: Number(e.target.value) })}
                   />
                 </div>
               </div>
+              <p className="mt-2 text-[0.65rem] leading-snug text-muted-foreground">
+                {izCorregida(form.section, form.montaje, form.polaridad, form.tempAmb) != null
+                  ? `Valor de tabla: ${izCorregida(form.section, form.montaje, form.polaridad, form.tempAmb)} A${
+                      form.montaje === "caneria"
+                        ? ` (Iz tabla × k=${factorTemp(form.tempAmb)} por temperatura)`
+                        : ""
+                    }. Podés forzar otro valor si tenés datos del fabricante.`
+                  : "Esa combinación de sección, montaje y polaridad no está tabulada; cargá el valor a mano."}
+              </p>
               {form.cableIz > 0 && form.In > form.cableIz && (
                 <p className="mt-2 text-[0.7rem] text-destructive">
                   In ({form.In} A) supera la corriente admisible del cable ({form.cableIz} A).
                 </p>
               )}
             </div>
+
 
             <div className="flex gap-2">
               <button
