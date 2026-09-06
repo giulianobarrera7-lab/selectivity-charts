@@ -9,6 +9,18 @@ import {
   type ProtType,
   type Verdict,
 } from "@/lib/selectividad";
+import {
+  ICU_VALORES,
+  SECCIONES,
+  TABLA_5I,
+  TABLA_5II,
+  TABLA_5III,
+  factorTemp,
+  izTabla,
+  type Montaje,
+  type Polaridad,
+} from "@/lib/tablas";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
