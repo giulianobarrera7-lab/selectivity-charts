@@ -56,11 +56,14 @@ type Device = {
   visible: boolean;
   /** Protección inmediatamente aguas arriba (null = cabecera / acometida). */
   parentId: string | null;
-  // Cable asociado (informativo)
-  cableType: "unipolar" | "multipolar";
-  install: "subterraneo" | "aire";
+  // Cable asociado — Iz según tablas 5.I / 5.II / 5.III (AEA 90364)
+  montaje: Montaje;
+  polaridad: Polaridad;
+  tempAmb: number;
   section: number;
+  /** Iz corregida (A). Se calcula de tabla salvo que el usuario la fuerce. */
   cableIz: number;
+
   color: string;
 };
 
