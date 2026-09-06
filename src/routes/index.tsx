@@ -253,7 +253,7 @@ const emptyForm = (): Omit<Device, "id" | "color" | "visible"> => ({
   cableIz: izCorregida(2.5, "caneria", "tripolar", 40) ?? 18,
 });
 
-function Index() {
+export function Index() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [form, setForm] = useState(emptyForm());
   const [editing, setEditing] = useState<string | null>(null);
