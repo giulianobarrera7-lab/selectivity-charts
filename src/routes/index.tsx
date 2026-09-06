@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  TYPES,
+  curveTimes,
+  buildAuditPairs,
+  getDescendantIds,
+  worstVerdict,
+  type ProtType,
+  type Verdict,
+} from "@/lib/selectividad";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -8,13 +17,13 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Herramienta para estudiar la selectividad entre protecciones eléctricas: carga de equipos, curvas de disparo log-log superpuestas y detección de cruces.",
+          "Auditoría de selectividad entre protecciones eléctricas: coordinación aguas arriba/aguas abajo, comparación de bandas tiempo-corriente y verificación por zona de sobrecarga y cortocircuito.",
       },
       { property: "og:title", content: "Selectividad de Protecciones Eléctricas" },
       {
         property: "og:description",
         content:
-          "Graficá curvas tiempo-corriente de termomagnéticas, guardamotores, fusibles y relés y verificá la selectividad entre aguas arriba y aguas abajo.",
+          "Cargá el árbol de protecciones (aguas arriba/aguas abajo) y verificá selectividad en sobrecarga y cortocircuito por separado, con curvas tiempo-corriente log-log.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -25,8 +34,6 @@ export const Route = createFileRoute("/")({
 
 /* ───────────────────────── Modelo de datos ───────────────────────── */
 
-type ProtType = "termomagnetico" | "guardamotor" | "fusible" | "rele" | "termico";
-
 type Device = {
   id: string;
   name: string;
@@ -35,6 +42,8 @@ type Device = {
   curve: string;
   kA: number;
   visible: boolean;
+  /** Protección inmediatamente aguas arriba (null = cabecera / acometida). */
+  parentId: string | null;
   // Cable asociado (informativo)
   cableType: "unipolar" | "multipolar";
   install: "subterraneo" | "aire";
@@ -42,18 +51,6 @@ type Device = {
   cableIz: number;
   color: string;
 };
-
-const TYPES: { value: ProtType; label: string; curves: string[] }[] = [
-  {
-    value: "termomagnetico",
-    label: "Interruptor termomagnético",
-    curves: ["B", "C", "D", "K", "Z"],
-  },
-  { value: "guardamotor", label: "Guardamotor (magnetotérmico)", curves: ["MA", "Clase 10", "Clase 20"] },
-  { value: "fusible", label: "Fusible", curves: ["gG", "aM"] },
-  { value: "rele", label: "Relé de sobrecorriente", curves: ["IEC NI", "IEC MI", "IEC EI"] },
-  { value: "termico", label: "Relé térmico", curves: ["Clase 10", "Clase 20", "Clase 30"] },
-];
 
 const PALETTE = [
   "#f4b73f",
@@ -66,116 +63,28 @@ const PALETTE = [
   "#ff6b6b",
 ];
 
-const MAG_BAND: Record<string, [number, number]> = {
-  B: [3, 5],
-  C: [5, 10],
-  D: [10, 14],
-  K: [10, 14],
-  Z: [2.4, 3.6],
-  MA: [12, 13],
+const VERDICT_LABEL: Record<Verdict, string> = {
+  TOTAL: "Selectividad total",
+  PARCIAL: "Selectividad parcial",
+  NO_SELECTIVO: "No selectivo",
+  NO_VERIFICABLE: "No verificable",
 };
 
-const CLASS_K: Record<string, number> = {
-  "Clase 10": 60,
-  "Clase 20": 120,
-  "Clase 30": 180,
+const VERDICT_DOT: Record<Verdict, string> = {
+  TOTAL: "🟢",
+  PARCIAL: "🟡",
+  NO_SELECTIVO: "🔴",
+  NO_VERIFICABLE: "⚪",
 };
 
-/** Tiempo de disparo [s] para una corriente I [A]. null = no dispara. */
-function tripTime(d: Device, I: number): number | null {
-  const x = I / d.In;
-  const MAXT = 7200;
-  const INST = 0.01;
-
-  if (d.type === "fusible") {
-    const k = d.curve === "aM" ? 900 : 300;
-    if (x <= 1.25) return null;
-    const t = k * Math.pow(x, -4);
-    return t > MAXT ? null : Math.max(t, 0.002);
-  }
-
-  if (d.type === "rele") {
-    const p = d.curve === "IEC EI" ? { a: 80, n: 2 } : d.curve === "IEC MI" ? { a: 13.5, n: 1 } : { a: 0.14, n: 0.02 };
-    if (x <= 1.05) return null;
-    const t = (0.2 * p.a) / (Math.pow(x, p.n) - 1);
-    return t > MAXT ? null : Math.max(t, 0.05);
-  }
-
-  if (d.type === "termico") {
-    const k = CLASS_K[d.curve] ?? 60;
-    if (x <= 1.05) return null;
-    const t = k / (x * x - 1);
-    return t > MAXT ? null : t;
-  }
-
-  // Termomagnético / guardamotor: térmica + magnética
-  const band =
-    MAG_BAND[d.curve] ?? (d.type === "guardamotor" ? MAG_BAND["MA"]! : MAG_BAND["C"]!);
-  const kTh = d.type === "guardamotor" ? (CLASS_K[d.curve] ?? 60) : 80;
-  if (x >= band[0]) return INST;
-  if (x <= 1.13) return null;
-  const t = kTh / (x * x - 1);
-  return t > MAXT ? null : t;
-}
-
-/* ───────────────────────── Selectividad ───────────────────────── */
-
-type Issue = {
-  up: Device;
-  down: Device;
-  severity: "cruce" | "margen";
-  current: number;
-  detail: string;
+const VERDICT_TONE: Record<Verdict, "ok" | "warn" | "bad" | "muted"> = {
+  TOTAL: "ok",
+  PARCIAL: "warn",
+  NO_SELECTIVO: "bad",
+  NO_VERIFICABLE: "muted",
 };
 
-function analyze(devices: Device[]) {
-  const list = [...devices].filter((d) => d.visible).sort((a, b) => a.In - b.In);
-  const issues: Issue[] = [];
-  for (let i = 0; i < list.length; i++) {
-    for (let j = i + 1; j < list.length; j++) {
-      const down = list[i]!;
-      const up = list[j]!;
-      if (up.In <= down.In) continue;
-      let worst: Issue | null = null;
-      for (let s = 0; s <= 300; s++) {
-        const I = down.In * Math.pow(20 / 0.9, s / 300) * 0.9;
-        const tD = tripTime(down, I);
-        const tU = tripTime(up, I);
-        if (tD == null || tU == null) continue;
-        const ratio = tU / tD;
-        if (ratio < 1) {
-          worst = {
-            up,
-            down,
-            severity: "cruce",
-            current: I,
-            detail: `A ${I.toFixed(0)} A la protección aguas arriba dispara antes (${fmtT(tU)} vs ${fmtT(tD)}).`,
-          };
-          break;
-        }
-        if (ratio < 1.5 && !worst) {
-          worst = {
-            up,
-            down,
-            severity: "margen",
-            current: I,
-            detail: `A ${I.toFixed(0)} A el margen de tiempo es escaso (${ratio.toFixed(2)}× · ${fmtT(tU)} vs ${fmtT(tD)}).`,
-          };
-        }
-      }
-      if (worst) issues.push(worst);
-    }
-  }
-  return issues;
-}
-
-function fmtT(t: number) {
-  if (t < 0.1) return `${(t * 1000).toFixed(0)} ms`;
-  if (t < 60) return `${t.toFixed(2)} s`;
-  return `${(t / 60).toFixed(1)} min`;
-}
-
-/* ───────────────────────── Gráfico log-log ───────────────────────── */
+/* ───────────────────────── Gráfico log-log (banda mín/máx) ───────────────────────── */
 
 function CurveChart({ devices }: { devices: Device[] }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
@@ -204,9 +113,13 @@ function CurveChart({ devices }: { devices: Device[] }) {
     const Tmin = 0.005;
     const Tmax = 7200;
     const lx = (I: number) =>
-      pad.l + ((Math.log10(I) - Math.log10(Imin)) / (Math.log10(Imax) - Math.log10(Imin))) * (w - pad.l - pad.r);
+      pad.l +
+      ((Math.log10(I) - Math.log10(Imin)) / (Math.log10(Imax) - Math.log10(Imin))) *
+        (w - pad.l - pad.r);
     const ly = (t: number) =>
-      pad.t + ((Math.log10(Tmax) - Math.log10(t)) / (Math.log10(Tmax) - Math.log10(Tmin))) * (h - pad.t - pad.b);
+      pad.t +
+      ((Math.log10(Tmax) - Math.log10(t)) / (Math.log10(Tmax) - Math.log10(Tmin))) *
+        (h - pad.t - pad.b);
 
     // grilla
     ctx.font = "10px ui-monospace, monospace";
@@ -248,27 +161,39 @@ function CurveChart({ devices }: { devices: Device[] }) {
     ctx.textAlign = "left";
     ctx.fillText("t", 8, pad.t + 10);
 
-    // curvas
+    // curvas: banda [tMin, tMax] rellena + bordes
+    const STEPS = 900;
     visible.forEach((d) => {
-      ctx.strokeStyle = d.color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      let started = false;
-      for (let s = 0; s <= 900; s++) {
-        const I = Imin * Math.pow(Imax / Imin, s / 900);
-        const t = tripTime(d, I);
-        if (t == null || t > Tmax || t < Tmin) {
-          started = false;
-          continue;
-        }
-        const X = lx(I);
-        const Y = ly(t);
-        if (!started) {
-          ctx.moveTo(X, Y);
-          started = true;
-        } else ctx.lineTo(X, Y);
+      const upper: [number, number][] = []; // borde rápido (tMin)
+      const lower: [number, number][] = []; // borde lento (tMax)
+
+      for (let s = 0; s <= STEPS; s++) {
+        const I = Imin * Math.pow(Imax / Imin, s / STEPS);
+        const { tMin, tMax } = curveTimes(d, I);
+        if (tMin != null && tMin <= Tmax && tMin >= Tmin) upper.push([lx(I), ly(tMin)]);
+        if (tMax != null && tMax <= Tmax && tMax >= Tmin) lower.push([lx(I), ly(tMax)]);
       }
-      ctx.stroke();
+
+      // relleno de banda (solo si hay puntos en ambos bordes)
+      if (upper.length > 1 && lower.length > 1) {
+        ctx.globalAlpha = 0.16;
+        ctx.fillStyle = d.color;
+        ctx.beginPath();
+        upper.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        for (let i = lower.length - 1; i >= 0; i--) ctx.lineTo(lower[i]![0], lower[i]![1]);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.strokeStyle = d.color;
+      ctx.lineWidth = 1.6;
+      [upper, lower].forEach((pts) => {
+        if (pts.length < 2) return;
+        ctx.beginPath();
+        pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.stroke();
+      });
 
       // marca de In
       ctx.globalAlpha = 0.5;
@@ -287,7 +212,8 @@ function CurveChart({ devices }: { devices: Device[] }) {
 
 /* ───────────────────────── Página ───────────────────────── */
 
-const STORAGE = "selectividad.devices.v1";
+const STORAGE = "selectividad.devices.v2";
+const STORAGE_LEGACY = "selectividad.devices.v1";
 
 const emptyForm = (): Omit<Device, "id" | "color" | "visible"> => ({
   name: "",
@@ -295,6 +221,7 @@ const emptyForm = (): Omit<Device, "id" | "color" | "visible"> => ({
   In: 16,
   curve: "C",
   kA: 6,
+  parentId: null,
   cableType: "unipolar",
   install: "aire",
   section: 2.5,
@@ -309,8 +236,11 @@ function Index() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE);
-      if (raw) setDevices(JSON.parse(raw) as Device[]);
+      const raw = localStorage.getItem(STORAGE) ?? localStorage.getItem(STORAGE_LEGACY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Device[];
+        setDevices(parsed.map((d) => ({ ...d, parentId: d.parentId ?? null })));
+      }
     } catch {
       /* ignore */
     }
@@ -321,8 +251,17 @@ function Index() {
     if (loaded) localStorage.setItem(STORAGE, JSON.stringify(devices));
   }, [devices, loaded]);
 
-  const issues = useMemo(() => analyze(devices), [devices]);
+  const pairs = useMemo(() => buildAuditPairs(devices.filter((d) => d.visible)), [devices]);
   const curves = TYPES.find((t) => t.value === form.type)?.curves ?? ["C"];
+
+  const parentOptions = useMemo(() => {
+    const excluded = new Set<string>();
+    if (editing) {
+      excluded.add(editing);
+      getDescendantIds(editing, devices).forEach((id) => excluded.add(id));
+    }
+    return devices.filter((d) => !excluded.has(d.id));
+  }, [devices, editing]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -351,14 +290,47 @@ function Index() {
     setEditing(d.id);
   }
 
-  function verdict(d: Device) {
-    const rel = issues.filter((i) => i.up.id === d.id || i.down.id === d.id);
-    if (!d.visible) return { label: "Oculto", tone: "muted" as const, detail: "" };
-    if (rel.some((i) => i.severity === "cruce"))
-      return { label: "No apto", tone: "bad" as const, detail: rel.find((i) => i.severity === "cruce")!.detail };
-    if (rel.length) return { label: "Revisar", tone: "warn" as const, detail: rel[0]!.detail };
-    return { label: "Apto", tone: "ok" as const, detail: "Selectivo con las demás protecciones cargadas." };
+  function removeDevice(id: string) {
+    // Los circuitos que colgaban del eliminado se reconectan un nivel arriba,
+    // para no romper la cadena de aguas arriba/aguas abajo.
+    const removed = devices.find((d) => d.id === id);
+    const parentId = removed ? removed.parentId : null;
+    setDevices((ds) =>
+      ds.filter((d) => d.id !== id).map((d) => (d.parentId === id ? { ...d, parentId } : d)),
+    );
+    if (editing === id) setEditing(null);
   }
+
+  /** Pares donde `d` es la protección aguas abajo (su propia cobertura). */
+  function pairsFor(d: Device) {
+    return pairs.filter((p) => p.down.id === d.id);
+  }
+
+  function deviceStatus(d: Device) {
+    if (!d.visible) return { label: "Oculto", tone: "muted" as const, detail: "" };
+    if (!d.parentId)
+      return {
+        label: "Cabecera",
+        tone: "muted" as const,
+        detail: "Sin protección aguas arriba definida en el árbol.",
+      };
+    const rel = pairsFor(d);
+    if (!rel.length)
+      return {
+        label: "Sin datos",
+        tone: "muted" as const,
+        detail: "No se pudo evaluar la cadena aguas arriba.",
+      };
+    const v = worstVerdict(rel.map((p) => p.global.verdict))!;
+    const worstPair = rel.find((p) => p.global.verdict === v)!;
+    return { label: VERDICT_LABEL[v], tone: VERDICT_TONE[v], detail: worstPair.global.detail };
+  }
+
+  const projectVerdict = worstVerdict(pairs.map((p) => p.global.verdict));
+  const sortedPairs = [...pairs].sort((a, b) => {
+    if (a.adyacente !== b.adyacente) return a.adyacente ? -1 : 1;
+    return a.down.name.localeCompare(b.down.name);
+  });
 
   const toneClass = {
     ok: "bg-success/15 text-success border-success/40",
@@ -377,9 +349,18 @@ function Index() {
           Selectividad de protecciones eléctricas
         </h1>
         <p className="mt-2 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Cargá cada protección con su corriente nominal y curva de disparo. Las curvas se
-          superponen en escala log-log y la app avisa si se cruzan o si falta margen entre aguas
-          arriba y aguas abajo. Los datos de cable son informativos.
+          Cargá cada protección indicando de qué protección "aguas arriba" depende. La app arma el
+          árbol de alimentación y verifica, para cada tramo, si actúa primero la protección
+          inmediatamente aguas abajo — por separado en la zona de sobrecarga y en la de
+          cortocircuito — comparando bandas tiempo-corriente, no una única curva ideal.
+        </p>
+        <p className="mt-2 max-w-2xl text-[0.68rem] leading-relaxed text-muted-foreground">
+          Los resultados son una <strong>estimación según curva genérica</strong> (letra B/C/D/K/Z o
+          clase 10/20/30), calibrada contra los puntos normalizados de IEC 60898-1 / IEC 60947-4-1 /
+          IEC 60255-151 / IEC 60269. La reglamentación (AEA 90364) exige que la protección coordine
+          para que actúe primero la más cercana a la falla; esta herramienta no reemplaza las tablas
+          de selectividad certificadas por el fabricante del dispositivo real instalado, que son las
+          únicas que permiten declarar selectividad garantizada.
         </p>
       </header>
 
@@ -398,6 +379,21 @@ function Index() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
+            </div>
+            <div>
+              <span className="label-xs">Alimentado desde (aguas arriba)</span>
+              <select
+                className="field"
+                value={form.parentId ?? ""}
+                onChange={(e) => setForm({ ...form, parentId: e.target.value || null })}
+              >
+                <option value="">— Ninguno (acometida / cabecera) —</option>
+                {parentOptions.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} (In {d.In} A)
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <span className="label-xs">Tipo de protección</span>
@@ -542,17 +538,19 @@ function Index() {
         <div className="space-y-5">
           <section className="panel p-4">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">Curvas de disparo (log-log)</h2>
+              <h2 className="text-sm font-semibold">Curvas de disparo (banda mín/máx, log-log)</h2>
               <div className="flex flex-wrap gap-3 text-[0.7rem]">
-                {devices.filter((d) => d.visible).map((d) => (
-                  <span key={d.id} className="flex items-center gap-1.5">
-                    <span
-                      className="inline-block h-2 w-4 rounded-sm"
-                      style={{ backgroundColor: d.color }}
-                    />
-                    {d.name}
-                  </span>
-                ))}
+                {devices
+                  .filter((d) => d.visible)
+                  .map((d) => (
+                    <span key={d.id} className="flex items-center gap-1.5">
+                      <span
+                        className="inline-block h-2 w-4 rounded-sm"
+                        style={{ backgroundColor: d.color }}
+                      />
+                      {d.name}
+                    </span>
+                  ))}
               </div>
             </div>
             {devices.some((d) => d.visible) ? (
@@ -566,44 +564,119 @@ function Index() {
 
           <section className="panel p-4">
             <h2 className="mb-3 text-sm font-semibold">
-              Verificación de selectividad{" "}
-              <span
-                className={`ml-1 rounded border px-2 py-0.5 text-[0.65rem] ${
-                  issues.some((i) => i.severity === "cruce")
-                    ? toneClass.bad
-                    : issues.length
-                      ? toneClass.warn
-                      : toneClass.ok
-                }`}
-              >
-                {issues.some((i) => i.severity === "cruce")
-                  ? "Pérdida de selectividad"
-                  : issues.length
-                    ? "Margen ajustado"
-                    : "Sin conflictos"}
-              </span>
+              Estado de selectividad del proyecto{" "}
+              {projectVerdict ? (
+                <span
+                  className={`ml-1 rounded border px-2 py-0.5 text-[0.65rem] ${toneClass[VERDICT_TONE[projectVerdict]]}`}
+                >
+                  {VERDICT_DOT[projectVerdict]} {VERDICT_LABEL[projectVerdict]}
+                </span>
+              ) : (
+                <span
+                  className={`ml-1 rounded border px-2 py-0.5 text-[0.65rem] ${toneClass.muted}`}
+                >
+                  Sin tramos para evaluar
+                </span>
+              )}
             </h2>
-            {issues.length === 0 ? (
+            {pairs.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No se detectan cruces ni márgenes menores a 1,5× entre las protecciones cargadas.
+                Cargá al menos dos protecciones encadenadas (una "alimentada desde" la otra) para
+                obtener un resultado.
               </p>
             ) : (
               <ul className="space-y-2">
-                {issues.map((i, k) => (
-                  <li
-                    key={k}
-                    className={`rounded-md border p-2.5 text-[0.72rem] leading-relaxed ${
-                      i.severity === "cruce" ? toneClass.bad : toneClass.warn
-                    }`}
-                  >
-                    <strong>
-                      {i.up.name} (aguas arriba) vs {i.down.name} (aguas abajo)
-                    </strong>
-                    <br />
-                    {i.detail}
-                  </li>
-                ))}
+                {sortedPairs
+                  .filter((p) => p.global.verdict !== "TOTAL")
+                  .map((p, k) => (
+                    <li
+                      key={k}
+                      className={`rounded-md border p-2.5 text-[0.72rem] leading-relaxed ${toneClass[VERDICT_TONE[p.global.verdict]]}`}
+                    >
+                      <strong>
+                        {p.up.name} (aguas arriba) → {p.down.name} (aguas abajo)
+                        {!p.adyacente && " · cadena global (no inmediata)"}
+                      </strong>
+                      <br />
+                      {p.splitByZone ? (
+                        <>
+                          Sobrecarga: {VERDICT_DOT[p.sobrecarga!.verdict]}{" "}
+                          {VERDICT_LABEL[p.sobrecarga!.verdict]} — {p.sobrecarga!.detail}
+                          <br />
+                          Cortocircuito: {VERDICT_DOT[p.cortocircuito!.verdict]}{" "}
+                          {VERDICT_LABEL[p.cortocircuito!.verdict]} — {p.cortocircuito!.detail}
+                        </>
+                      ) : (
+                        p.combinado!.detail
+                      )}
+                      {p.notas.length > 0 && (
+                        <ul className="mt-1 list-inside list-disc text-[0.68rem] text-muted-foreground">
+                          {p.notas.map((n, i) => (
+                            <li key={i}>{n}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  ))}
+                {sortedPairs.every((p) => p.global.verdict === "TOTAL") && (
+                  <p className="text-xs text-muted-foreground">
+                    No se detectan pérdidas de selectividad (estimadas) entre los tramos cargados.
+                  </p>
+                )}
               </ul>
+            )}
+          </section>
+
+          <section className="panel overflow-x-auto p-4">
+            <h2 className="mb-1 text-sm font-semibold">Matriz de selectividad</h2>
+            <p className="mb-3 text-[0.68rem] text-muted-foreground">
+              Cada fila compara una protección con una protección aguas arriba de su cadena
+              (inmediata o más lejana, para detectar también problemas de coordinación global).
+            </p>
+            {pairs.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Todavía no hay tramos para auditar.</p>
+            ) : (
+              <table className="w-full min-w-[860px] text-left text-[0.72rem]">
+                <thead className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th className="whitespace-nowrap py-2 pr-4">Aguas arriba</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Aguas abajo</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Relación</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Sobrecarga</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Cortocircuito</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Resultado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedPairs.map((p, k) => (
+                    <tr key={k} className="border-b border-border/50 align-top">
+                      <td className="py-2 pr-4">{p.up.name}</td>
+                      <td className="py-2 pr-4">{p.down.name}</td>
+                      <td className="py-2 pr-4 text-muted-foreground">
+                        {p.adyacente ? "Inmediata" : "Cadena global"}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {p.splitByZone
+                          ? `${VERDICT_DOT[p.sobrecarga!.verdict]} ${VERDICT_LABEL[p.sobrecarga!.verdict]}`
+                          : "N/A"}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {p.splitByZone
+                          ? `${VERDICT_DOT[p.cortocircuito!.verdict]} ${VERDICT_LABEL[p.cortocircuito!.verdict]}`
+                          : `${VERDICT_DOT[p.combinado!.verdict]} ${VERDICT_LABEL[p.combinado!.verdict]} (curva única)`}
+                      </td>
+                      <td className="py-2 pr-4">
+                        <span
+                          title={p.global.detail}
+                          className={`rounded border px-2 py-0.5 text-[0.65rem] ${toneClass[VERDICT_TONE[p.global.verdict]]}`}
+                        >
+                          {VERDICT_DOT[p.global.verdict]} {VERDICT_LABEL[p.global.verdict]}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </section>
 
@@ -612,15 +685,15 @@ function Index() {
             {devices.length === 0 ? (
               <p className="text-xs text-muted-foreground">Todavía no cargaste equipos.</p>
             ) : (
-              <table className="w-full min-w-[820px] text-left text-[0.72rem]">
+              <table className="w-full min-w-[900px] text-left text-[0.72rem]">
                 <thead className="text-[0.62rem] uppercase tracking-wider text-muted-foreground">
                   <tr className="border-b border-border">
                     <th className="whitespace-nowrap py-2 pr-4">Equipo</th>
+                    <th className="whitespace-nowrap py-2 pr-4">Aguas arriba</th>
                     <th className="whitespace-nowrap py-2 pr-4">Tipo</th>
                     <th className="whitespace-nowrap py-2 pr-4">In</th>
                     <th className="whitespace-nowrap py-2 pr-4">Curva</th>
                     <th className="whitespace-nowrap py-2 pr-4">kA</th>
-                    <th className="whitespace-nowrap py-2 pr-4">Cable</th>
                     <th className="whitespace-nowrap py-2 pr-4">Estado</th>
                     <th className="py-2 text-right">Acciones</th>
                   </tr>
@@ -629,7 +702,8 @@ function Index() {
                   {[...devices]
                     .sort((a, b) => b.In - a.In)
                     .map((d) => {
-                      const v = verdict(d);
+                      const v = deviceStatus(d);
+                      const parent = devices.find((x) => x.id === d.parentId);
                       return (
                         <tr key={d.id} className="border-b border-border/50">
                           <td className="py-2 pr-4">
@@ -641,16 +715,15 @@ function Index() {
                               {d.name}
                             </span>
                           </td>
+                          <td className="py-2 pr-4 text-muted-foreground">
+                            {parent ? parent.name : "—"}
+                          </td>
                           <td className="py-2 text-muted-foreground">
                             {TYPES.find((t) => t.value === d.type)?.label}
                           </td>
                           <td className="py-2 pr-4">{d.In} A</td>
                           <td className="py-2 pr-4">{d.curve}</td>
                           <td className="py-2 pr-4">{d.kA}</td>
-                          <td className="py-2 text-muted-foreground">
-                            {d.section} mm² · {d.cableType === "unipolar" ? "uni" : "multi"} ·{" "}
-                            {d.install === "aire" ? "aire" : "subt."} · Iz {d.cableIz} A
-                          </td>
                           <td className="py-2 pr-4">
                             <span
                               title={v.detail}
@@ -680,10 +753,7 @@ function Index() {
                                 Editar
                               </button>
                               <button
-                                onClick={() => {
-                                  setDevices((ds) => ds.filter((x) => x.id !== d.id));
-                                  if (editing === d.id) setEditing(null);
-                                }}
+                                onClick={() => removeDevice(d.id)}
                                 className="rounded border border-destructive/50 px-2 py-1 text-destructive hover:bg-destructive/10"
                               >
                                 Eliminar
