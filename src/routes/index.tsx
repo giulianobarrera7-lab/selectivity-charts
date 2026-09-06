@@ -877,6 +877,114 @@ function Index() {
               </table>
             )}
           </section>
+
+          <section className="panel p-4">
+            <h2 className="mb-1 text-sm font-semibold">Tablas de referencia</h2>
+            <p className="mb-3 text-[0.68rem] text-muted-foreground">
+              Corriente admisible (Iz) y capacidad de ruptura (Icu) según AEA 90364 / Reglamento
+              para la Ejecución de Instalaciones Eléctricas en Inmuebles.
+            </p>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="overflow-x-auto">
+                <h3 className="label-xs mb-1">
+                  Tabla 5.I — IRAM 2183 en cañería, 3 conductores, 40 °C
+                </h3>
+                <table className="w-full text-left text-[0.7rem]">
+                  <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                    <tr className="border-b border-border">
+                      <th className="py-1.5 pr-4">Sección (mm²)</th>
+                      <th className="py-1.5 pr-4">Iz (A)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {TABLA_5I.map((r) => (
+                      <tr key={r.s} className="border-b border-border/40">
+                        <td className="py-1 pr-4">{r.s}</td>
+                        <td className="py-1 pr-4">{r.iz}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-4">
+                <div className="overflow-x-auto">
+                  <h3 className="label-xs mb-1">
+                    Tabla 5.II — corrección por temperatura ambiente
+                  </h3>
+                  <table className="w-full text-left text-[0.7rem]">
+                    <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                      <tr className="border-b border-border">
+                        <th className="py-1.5 pr-4">Temp. (°C)</th>
+                        <th className="py-1.5 pr-4">Factor k</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {TABLA_5II.map((r) => (
+                        <tr key={r.temp} className="border-b border-border/40">
+                          <td className="py-1 pr-4">{r.temp}</td>
+                          <td className="py-1 pr-4">{r.k}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <h3 className="label-xs mb-1">Icu normalizada (IEC 60898-1 / 60947-2)</h3>
+                  <table className="w-full text-left text-[0.7rem]">
+                    <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                      <tr className="border-b border-border">
+                        <th className="py-1.5 pr-4">kA</th>
+                        <th className="py-1.5 pr-4">Aplicación típica</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ICU_VALORES.map((r) => (
+                        <tr key={r.kA} className="border-b border-border/40">
+                          <td className="whitespace-nowrap py-1 pr-4">{r.kA}</td>
+                          <td className="py-1 pr-4 text-muted-foreground">{r.uso}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto">
+              <h3 className="label-xs mb-1">
+                Tabla 5.III — IRAM 2220/2261/2262: al aire (40 °C) y enterrado (25 °C)
+              </h3>
+              <table className="w-full min-w-[640px] text-left text-[0.7rem]">
+                <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th className="py-1.5 pr-4">Sección (mm²)</th>
+                    <th className="py-1.5 pr-4">Aire uni</th>
+                    <th className="py-1.5 pr-4">Aire bip</th>
+                    <th className="py-1.5 pr-4">Aire trip/tetra</th>
+                    <th className="py-1.5 pr-4">Ent. uni</th>
+                    <th className="py-1.5 pr-4">Ent. bip</th>
+                    <th className="py-1.5 pr-4">Ent. trip/tetra</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {TABLA_5III.map((r) => (
+                    <tr key={r.s} className="border-b border-border/40">
+                      <td className="py-1 pr-4">{r.s}</td>
+                      {[...r.aire, ...r.ent].map((v, i) => (
+                        <td key={i} className="py-1 pr-4">
+                          {v ?? "—"}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
         </div>
       </div>
     </main>
