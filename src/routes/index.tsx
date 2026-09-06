@@ -9,6 +9,18 @@ import {
   type ProtType,
   type Verdict,
 } from "@/lib/selectividad";
+import {
+  ICU_VALORES,
+  SECCIONES,
+  TABLA_5I,
+  TABLA_5II,
+  TABLA_5III,
+  factorTemp,
+  izTabla,
+  type Montaje,
+  type Polaridad,
+} from "@/lib/tablas";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -44,11 +56,14 @@ type Device = {
   visible: boolean;
   /** Protección inmediatamente aguas arriba (null = cabecera / acometida). */
   parentId: string | null;
-  // Cable asociado (informativo)
-  cableType: "unipolar" | "multipolar";
-  install: "subterraneo" | "aire";
+  // Cable asociado — Iz según tablas 5.I / 5.II / 5.III (AEA 90364)
+  montaje: Montaje;
+  polaridad: Polaridad;
+  tempAmb: number;
   section: number;
+  /** Iz corregida (A). Se calcula de tabla salvo que el usuario la fuerce. */
   cableIz: number;
+
   color: string;
 };
 
@@ -212,8 +227,17 @@ function CurveChart({ devices }: { devices: Device[] }) {
 
 /* ───────────────────────── Página ───────────────────────── */
 
-const STORAGE = "selectividad.devices.v2";
-const STORAGE_LEGACY = "selectividad.devices.v1";
+const STORAGE = "selectividad.devices.v3";
+const STORAGE_LEGACY = "selectividad.devices.v2";
+const STORAGE_LEGACY_1 = "selectividad.devices.v1";
+
+/** Iz de tabla corregida por temperatura ambiente (tabla 5.II aplica a cañería). */
+function izCorregida(section: number, montaje: Montaje, pol: Polaridad, temp: number) {
+  const base = izTabla(section, montaje, pol);
+  if (base == null) return null;
+  const k = montaje === "caneria" ? factorTemp(temp) : 1;
+  return +(base * k).toFixed(1);
+}
 
 const emptyForm = (): Omit<Device, "id" | "color" | "visible"> => ({
   name: "",
@@ -222,10 +246,11 @@ const emptyForm = (): Omit<Device, "id" | "color" | "visible"> => ({
   curve: "C",
   kA: 6,
   parentId: null,
-  cableType: "unipolar",
-  install: "aire",
+  montaje: "caneria",
+  polaridad: "tripolar",
+  tempAmb: 40,
   section: 2.5,
-  cableIz: 21,
+  cableIz: izCorregida(2.5, "caneria", "tripolar", 40) ?? 18,
 });
 
 function Index() {
@@ -236,16 +261,31 @@ function Index() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE) ?? localStorage.getItem(STORAGE_LEGACY);
+      const raw =
+        localStorage.getItem(STORAGE) ??
+        localStorage.getItem(STORAGE_LEGACY) ??
+        localStorage.getItem(STORAGE_LEGACY_1);
       if (raw) {
-        const parsed = JSON.parse(raw) as Device[];
-        setDevices(parsed.map((d) => ({ ...d, parentId: d.parentId ?? null })));
+        const parsed = JSON.parse(raw) as (Device & {
+          cableType?: string;
+          install?: string;
+        })[];
+        setDevices(
+          parsed.map((d) => ({
+            ...d,
+            parentId: d.parentId ?? null,
+            montaje: d.montaje ?? (d.install === "subterraneo" ? "subterraneo" : "caneria"),
+            polaridad: d.polaridad ?? (d.cableType === "unipolar" ? "unipolar" : "tripolar"),
+            tempAmb: d.tempAmb ?? 40,
+          })),
+        );
       }
     } catch {
       /* ignore */
     }
     setLoaded(true);
   }, []);
+
 
   useEffect(() => {
     if (loaded) localStorage.setItem(STORAGE, JSON.stringify(devices));
@@ -441,75 +481,145 @@ function Index() {
               </div>
               <div>
                 <span className="label-xs">Icu (kA)</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.5"
+                <select
                   className="field"
                   value={form.kA}
                   onChange={(e) => setForm({ ...form, kA: Number(e.target.value) })}
-                />
+                >
+                  {ICU_VALORES.map((v) => (
+                    <option key={v.kA} value={v.kA}>
+                      {v.kA} kA
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
+            <p className="text-[0.65rem] leading-snug text-muted-foreground">
+              {ICU_VALORES.find((v) => v.kA === form.kA)?.uso ??
+                "Valor fuera de los normalizados IEC 60898-1 / 60947-2."}
+            </p>
 
             <div className="rounded-md border border-border/70 bg-secondary/40 p-3">
-              <p className="label-xs mb-2">Cable asociado (informativo)</p>
+              <p className="label-xs mb-2">Cable asociado — Iz según tablas AEA 90364</p>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <span className="label-xs">Tipo</span>
+                  <span className="label-xs">Montaje</span>
                   <select
                     className="field"
-                    value={form.cableType}
-                    onChange={(e) =>
-                      setForm({ ...form, cableType: e.target.value as Device["cableType"] })
-                    }
+                    value={form.montaje}
+                    onChange={(e) => {
+                      const montaje = e.target.value as Montaje;
+                      setForm({
+                        ...form,
+                        montaje,
+                        cableIz:
+                          izCorregida(form.section, montaje, form.polaridad, form.tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
                   >
-                    <option value="unipolar">Unipolar</option>
-                    <option value="multipolar">Multipolar / bipolar</option>
+                    <option value="caneria">En cañería (IRAM 2183, tabla 5.I)</option>
+                    <option value="aire">Al aire / bandeja (tabla 5.III)</option>
+                    <option value="subterraneo">Enterrado (tabla 5.III)</option>
                   </select>
                 </div>
                 <div>
-                  <span className="label-xs">Instalación</span>
+                  <span className="label-xs">Polaridad</span>
                   <select
                     className="field"
-                    value={form.install}
-                    onChange={(e) =>
-                      setForm({ ...form, install: e.target.value as Device["install"] })
-                    }
+                    value={form.polaridad}
+                    disabled={form.montaje === "caneria"}
+                    onChange={(e) => {
+                      const polaridad = e.target.value as Polaridad;
+                      setForm({
+                        ...form,
+                        polaridad,
+                        cableIz:
+                          izCorregida(form.section, form.montaje, polaridad, form.tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
                   >
-                    <option value="aire">Al aire / intemperie</option>
-                    <option value="subterraneo">Subterráneo</option>
+                    <option value="unipolar">Unipolar</option>
+                    <option value="bipolar">Bipolar</option>
+                    <option value="tripolar">Tripolar / tetrapolar</option>
                   </select>
                 </div>
                 <div>
                   <span className="label-xs">Sección (mm²)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.5"
+                  <select
                     className="field"
                     value={form.section}
-                    onChange={(e) => setForm({ ...form, section: Number(e.target.value) })}
-                  />
+                    onChange={(e) => {
+                      const section = Number(e.target.value);
+                      setForm({
+                        ...form,
+                        section,
+                        cableIz:
+                          izCorregida(section, form.montaje, form.polaridad, form.tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
+                  >
+                    {SECCIONES.map((s) => (
+                      <option key={s} value={s}>
+                        {s} mm²
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
+                  <span className="label-xs">Temp. ambiente (°C)</span>
+                  <select
+                    className="field"
+                    value={form.tempAmb}
+                    disabled={form.montaje !== "caneria"}
+                    onChange={(e) => {
+                      const tempAmb = Number(e.target.value);
+                      setForm({
+                        ...form,
+                        tempAmb,
+                        cableIz:
+                          izCorregida(form.section, form.montaje, form.polaridad, tempAmb) ??
+                          form.cableIz,
+                      });
+                    }}
+                  >
+                    {TABLA_5II.map((r) => (
+                      <option key={r.temp} value={r.temp}>
+                        {r.temp} °C (k = {r.k})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="col-span-2">
                   <span className="label-xs">Iz admisible (A)</span>
                   <input
                     type="number"
                     min={0}
-                    step="1"
+                    step="0.1"
                     className="field"
                     value={form.cableIz}
                     onChange={(e) => setForm({ ...form, cableIz: Number(e.target.value) })}
                   />
                 </div>
               </div>
+              <p className="mt-2 text-[0.65rem] leading-snug text-muted-foreground">
+                {izCorregida(form.section, form.montaje, form.polaridad, form.tempAmb) != null
+                  ? `Valor de tabla: ${izCorregida(form.section, form.montaje, form.polaridad, form.tempAmb)} A${
+                      form.montaje === "caneria"
+                        ? ` (Iz tabla × k=${factorTemp(form.tempAmb)} por temperatura)`
+                        : ""
+                    }. Podés forzar otro valor si tenés datos del fabricante.`
+                  : "Esa combinación de sección, montaje y polaridad no está tabulada; cargá el valor a mano."}
+              </p>
               {form.cableIz > 0 && form.In > form.cableIz && (
                 <p className="mt-2 text-[0.7rem] text-destructive">
                   In ({form.In} A) supera la corriente admisible del cable ({form.cableIz} A).
                 </p>
               )}
             </div>
+
 
             <div className="flex gap-2">
               <button
@@ -767,6 +877,114 @@ function Index() {
               </table>
             )}
           </section>
+
+          <section className="panel p-4">
+            <h2 className="mb-1 text-sm font-semibold">Tablas de referencia</h2>
+            <p className="mb-3 text-[0.68rem] text-muted-foreground">
+              Corriente admisible (Iz) y capacidad de ruptura (Icu) según AEA 90364 / Reglamento
+              para la Ejecución de Instalaciones Eléctricas en Inmuebles.
+            </p>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="overflow-x-auto">
+                <h3 className="label-xs mb-1">
+                  Tabla 5.I — IRAM 2183 en cañería, 3 conductores, 40 °C
+                </h3>
+                <table className="w-full text-left text-[0.7rem]">
+                  <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                    <tr className="border-b border-border">
+                      <th className="py-1.5 pr-4">Sección (mm²)</th>
+                      <th className="py-1.5 pr-4">Iz (A)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {TABLA_5I.map((r) => (
+                      <tr key={r.s} className="border-b border-border/40">
+                        <td className="py-1 pr-4">{r.s}</td>
+                        <td className="py-1 pr-4">{r.iz}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-4">
+                <div className="overflow-x-auto">
+                  <h3 className="label-xs mb-1">
+                    Tabla 5.II — corrección por temperatura ambiente
+                  </h3>
+                  <table className="w-full text-left text-[0.7rem]">
+                    <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                      <tr className="border-b border-border">
+                        <th className="py-1.5 pr-4">Temp. (°C)</th>
+                        <th className="py-1.5 pr-4">Factor k</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {TABLA_5II.map((r) => (
+                        <tr key={r.temp} className="border-b border-border/40">
+                          <td className="py-1 pr-4">{r.temp}</td>
+                          <td className="py-1 pr-4">{r.k}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <h3 className="label-xs mb-1">Icu normalizada (IEC 60898-1 / 60947-2)</h3>
+                  <table className="w-full text-left text-[0.7rem]">
+                    <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                      <tr className="border-b border-border">
+                        <th className="py-1.5 pr-4">kA</th>
+                        <th className="py-1.5 pr-4">Aplicación típica</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ICU_VALORES.map((r) => (
+                        <tr key={r.kA} className="border-b border-border/40">
+                          <td className="whitespace-nowrap py-1 pr-4">{r.kA}</td>
+                          <td className="py-1 pr-4 text-muted-foreground">{r.uso}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 overflow-x-auto">
+              <h3 className="label-xs mb-1">
+                Tabla 5.III — IRAM 2220/2261/2262: al aire (40 °C) y enterrado (25 °C)
+              </h3>
+              <table className="w-full min-w-[640px] text-left text-[0.7rem]">
+                <thead className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th className="py-1.5 pr-4">Sección (mm²)</th>
+                    <th className="py-1.5 pr-4">Aire uni</th>
+                    <th className="py-1.5 pr-4">Aire bip</th>
+                    <th className="py-1.5 pr-4">Aire trip/tetra</th>
+                    <th className="py-1.5 pr-4">Ent. uni</th>
+                    <th className="py-1.5 pr-4">Ent. bip</th>
+                    <th className="py-1.5 pr-4">Ent. trip/tetra</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {TABLA_5III.map((r) => (
+                    <tr key={r.s} className="border-b border-border/40">
+                      <td className="py-1 pr-4">{r.s}</td>
+                      {[...r.aire, ...r.ent].map((v, i) => (
+                        <td key={i} className="py-1 pr-4">
+                          {v ?? "—"}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
         </div>
       </div>
     </main>
