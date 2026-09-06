@@ -227,8 +227,17 @@ function CurveChart({ devices }: { devices: Device[] }) {
 
 /* ───────────────────────── Página ───────────────────────── */
 
-const STORAGE = "selectividad.devices.v2";
-const STORAGE_LEGACY = "selectividad.devices.v1";
+const STORAGE = "selectividad.devices.v3";
+const STORAGE_LEGACY = "selectividad.devices.v2";
+const STORAGE_LEGACY_1 = "selectividad.devices.v1";
+
+/** Iz de tabla corregida por temperatura ambiente (tabla 5.II aplica a cañería). */
+function izCorregida(section: number, montaje: Montaje, pol: Polaridad, temp: number) {
+  const base = izTabla(section, montaje, pol);
+  if (base == null) return null;
+  const k = montaje === "caneria" ? factorTemp(temp) : 1;
+  return +(base * k).toFixed(1);
+}
 
 const emptyForm = (): Omit<Device, "id" | "color" | "visible"> => ({
   name: "",
@@ -237,10 +246,11 @@ const emptyForm = (): Omit<Device, "id" | "color" | "visible"> => ({
   curve: "C",
   kA: 6,
   parentId: null,
-  cableType: "unipolar",
-  install: "aire",
+  montaje: "caneria",
+  polaridad: "tripolar",
+  tempAmb: 40,
   section: 2.5,
-  cableIz: 21,
+  cableIz: izCorregida(2.5, "caneria", "tripolar", 40) ?? 18,
 });
 
 function Index() {
@@ -251,16 +261,31 @@ function Index() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE) ?? localStorage.getItem(STORAGE_LEGACY);
+      const raw =
+        localStorage.getItem(STORAGE) ??
+        localStorage.getItem(STORAGE_LEGACY) ??
+        localStorage.getItem(STORAGE_LEGACY_1);
       if (raw) {
-        const parsed = JSON.parse(raw) as Device[];
-        setDevices(parsed.map((d) => ({ ...d, parentId: d.parentId ?? null })));
+        const parsed = JSON.parse(raw) as (Device & {
+          cableType?: string;
+          install?: string;
+        })[];
+        setDevices(
+          parsed.map((d) => ({
+            ...d,
+            parentId: d.parentId ?? null,
+            montaje: d.montaje ?? (d.install === "subterraneo" ? "subterraneo" : "caneria"),
+            polaridad: d.polaridad ?? (d.cableType === "unipolar" ? "unipolar" : "tripolar"),
+            tempAmb: d.tempAmb ?? 40,
+          })),
+        );
       }
     } catch {
       /* ignore */
     }
     setLoaded(true);
   }, []);
+
 
   useEffect(() => {
     if (loaded) localStorage.setItem(STORAGE, JSON.stringify(devices));
